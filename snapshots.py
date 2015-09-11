@@ -43,10 +43,10 @@ class AutomatedSnapShot(LoggingApp):
             while snap.status != 'completed':
                 snap.update()
                 print "The SnapShot-ID : %s Status is : %s @ %s" % (snap.id, snap.status, datetime.now())
-            time.sleep(5)
-            if snap.status == 'completed':
-                print snap.id + ' is complete.'
-                break
+                time.sleep(5)
+                if snap.status == 'completed':
+                    print snap.id + ' is complete.'
+                    break
 
 
     def snapshot_description(self, volume, instance_id, date):
