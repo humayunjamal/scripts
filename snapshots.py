@@ -35,43 +35,37 @@ class AutomatedSnapShot(LoggingApp):
 
 
 
-    def make_snapshots(self, vols):
-
-
+    def make_snapshots(self, c, vols):
         for vol in vols:
             desc = self.snapshot_description(vol, inst_id, today)
-            snap = vol.create_snapshot(desc)
+            snap = c.create_snapshot(vol.id, description=desc)
             snap.add_tag('Name', inst_id+"-snapshot-"+vol.id)
+            while snap.status != 'completed':
+                snap.update()
+                print "The SnapShot-ID : %s Status is : %s @ %s" % (snap.id, snap.status, datetime.now())
+            time.sleep(5)
+            if snap.status == 'completed':
+                print snap.id + ' is complete.'
+                break
 
 
     def snapshot_description(self, volume, instance_id, date):
         return "Snapshot-%s-Instance-%s-On-%s" % (volume.id, instance_id, date)
 
-    
+
     def snapshot_retention (self, c, vols):
-
-
         for vol in vols:
             desc = self.snapshot_description(vol, inst_id, four_weeks_ago)
             self.log.info("The Desciption of Four weeks ago snapshot we are looking for is %s" % desc)
             four_weeks_ago_snapshot = c.get_all_snapshots(filters = {"description": desc})
 
             for snap in four_weeks_ago_snapshot:
-                print "Found snapshot %s older then four weeks which will now be deleted" % snap.id 
+                print "Found snapshot %s older then four weeks which will now be deleted" % snap.id
                 try:
             #delete snapshot
                     c.delete_snapshot(snap.id)
                 except:
                     print "no snapshot four weeks ago to delete!"
-
-
-
-
-
-
-
-
-
 
 
 
@@ -84,7 +78,7 @@ class AutomatedSnapShot(LoggingApp):
             self.dryrunprefix = "DRYRUN NO CHANGE: " if self.params.dry_run else ""
 
         self.log.info("connecting to ec2 region %s" % self.params.region)
-        
+
         global now, today, four_weeks_ago, inst_id
         now = datetime.now()
         today = now.date()
@@ -112,7 +106,7 @@ class AutomatedSnapShot(LoggingApp):
 
         vols = self.get_attached_vol(c)
 
-        self.make_snapshots(vols)
+        self.make_snapshots(c, vols)
         self.snapshot_retention(c, vols)
 
 
