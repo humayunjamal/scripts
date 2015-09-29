@@ -1,0 +1,123 @@
+#!/bin/bash
+#
+# Argument = -u user -p password -k key -s secret -b bucket
+#
+# To Do - Add logging of output.
+# To Do - Abstract bucket region to options
+
+set -e
+
+export PATH="$PATH:/usr/local/bin"
+
+usage()
+{
+cat << EOF
+usage: $0 options
+
+This script dumps the current mongo database, tars it, then sends it to an Amazon S3 bucket.
+
+OPTIONS:
+   -h      Show this message
+   -u      Mongodb user
+   -p      Mongodb password
+EOF
+}
+
+MONGODB_USER=
+MONGODB_PASSWORD=
+
+while getopts “ht:u:p:k:s:r:b:” OPTION
+do
+  case $OPTION in
+    h)
+      usage
+      exit 1
+      ;;
+    u)
+      MONGODB_USER=$OPTARG
+      ;;
+    p)
+      MONGODB_PASSWORD=$OPTARG
+      ;;
+    ?)
+      usage
+      exit
+    ;;
+  esac
+done
+
+if [[ -z $MONGODB_USER ]] || [[ -z $MONGODB_PASSWORD ]] 
+then
+  usage
+  exit 1
+fi
+
+# Get the directory the script is being run from
+#DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+### DIR now changed to non root partition i.e where mongodb is running from###
+DIR="/var/lib/mongodb"
+
+# Find which host is hidden secondry 
+
+HiddenHost=`/usr/bin/mongo <%= @ipaddress %>/admin -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" --eval 'printjson( rs.conf() )' |grep -B 3 "hidden"|grep host|awk -F: {'print $2'} |tr -d \"`
+
+HostIP=`/usr/bin/dig +short $HiddenHost`
+
+LocalHostIP="<%= @ipaddress %>"
+
+if [ "$LocalHostIP" == "$HostIP" ]
+
+then
+
+  echo "THE WORKING DIRECTORY IS"
+  echo $DIR
+# Store the current date in YYYY-mm-DD-HHMMSS
+  DATE=$(date -u "+%F-%H%M%S")
+  FILE_NAME="backup-<%= @hostname %>-$DATE"
+  ARCHIVE_NAME="$FILE_NAME.tar.gz"
+
+# Lock the database
+# Note there is a bug in mongo 2.2.0 where you must touch all the databases before you run mongodump
+
+  echo "LOCKING THE DATABASES TO START BACKING UP"
+  mongo <%= @ipaddress %>/admin -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" --eval "rs.slaveOk();var databaseNames = db.getMongo().getDBNames(); for (var i in databaseNames) { printjson(db.getSiblingDB(databaseNames[i]).getCollectionNames()) }; printjson(db.fsyncLock());"
+
+  echo "Now Peforming MONGODUMP to dump the complete db to filesystem"
+# Dump the database
+  mongodump -h <%= @ipaddress %> -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" --oplog --out $DIR/backup/$FILE_NAME
+
+
+  echo "Unlocking the Database"
+# Unlock the database
+  mongo <%= @ipaddress %>/admin -username "$MONGODB_USER" -password "$MONGODB_PASSWORD" --eval "rs.slaveOk();printjson(db.fsyncUnlock());"
+
+# Tar Gzip the file
+  echo "Tarring the dump"
+
+  tar -C $DIR/backup/ -zcvf $DIR/backup/$ARCHIVE_NAME $FILE_NAME/
+
+# Remove the backup directory
+  echo "Removing the backup directory"
+
+  rm -r $DIR/backup/$FILE_NAME
+
+
+  echo " UPLOADING THE TARBALL to S3 Bucket"
+
+  cd $DIR/backup/
+  /opt/utils/s3upload.py -f $ARCHIVE_NAME -b <%= @mongodb_bkp_bucket %> -vvvv -e 
+
+  echo "Cleaning up backups folder"
+
+  rm -rf $DIR/backup/
+
+
+
+  echo "Backup Completed @"
+  echo $DATE
+
+else
+
+  echo "The Localhost is not the hidden Secondry hence no backup will be run"
+
+fi
